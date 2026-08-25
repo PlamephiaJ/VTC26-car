@@ -26,7 +26,7 @@ class ReactiveFollowGap(Node):
             AckermannDriveStamped, self.drive_topic, 10)
         self.marker_publisher = self.create_publisher(Marker, '/visualization_marker', 10)
 
-        self.bubble_radius = 0.18  # radius to keep clear of obstacles
+        self.bubble_radius = 0.25  # radius to keep clear of obstacles
         self.max_distance = 3.5   # max distance to consider for a valid gap
         self.disparity_thresh = 0.15
         self.last_steering_angle = 0.0
@@ -278,7 +278,7 @@ class ReactiveFollowGap(Node):
 
         drive_msg.drive.steering_angle = angle
         self.last_steering_angle = angle
-        set_speed = min(set_speed, 1.0)
+        set_speed = min(set_speed, 0.5)
         drive_msg.drive.speed = set_speed  # Set your desired speed
         self.publisher.publish(drive_msg)
 
