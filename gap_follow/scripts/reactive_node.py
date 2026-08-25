@@ -29,6 +29,53 @@ class ReactiveFollowGap(Node):
         self.bubble_radius = 0.18  # radius to keep clear of obstacles
         self.max_distance = 3.5   # max distance to consider for a valid gap
         self.disparity_thresh = 0.15
+        self.last_steering_angle = 0.0
+
+        # Keep these defaults synchronized with f1tenth_stack/config/vesc.yaml.
+        # servo = steering_gain * steering_angle + steering_offset
+        self.declare_parameter('steering_angle_to_servo_gain', -1.2135)
+        self.declare_parameter('steering_angle_to_servo_offset', 0.5304)
+        self.declare_parameter('servo_min', 0.15)
+        self.declare_parameter('servo_max', 0.85)
+        self.declare_parameter('servo_limit_margin', 0.001)
+
+        steering_gain = self.get_parameter(
+            'steering_angle_to_servo_gain').value
+        steering_offset = self.get_parameter(
+            'steering_angle_to_servo_offset').value
+        servo_min = self.get_parameter('servo_min').value
+        servo_max = self.get_parameter('servo_max').value
+        servo_margin = self.get_parameter('servo_limit_margin').value
+
+        angle_at_servo_min = (
+            servo_min + servo_margin - steering_offset) / steering_gain
+        angle_at_servo_max = (
+            servo_max - servo_margin - steering_offset) / steering_gain
+        self.min_steering_angle = min(
+            angle_at_servo_min, angle_at_servo_max)
+        self.max_steering_angle = max(
+            angle_at_servo_min, angle_at_servo_max)
+
+        self.get_logger().info(
+            f"Steering angle limits: [{self.min_steering_angle:.4f}, "
+            f"{self.max_steering_angle:.4f}] rad")
+
+    def stop_vehicle(self):
+        """Publish a zero command before the drive publisher is destroyed."""
+        stop_msg = AckermannDriveStamped()
+        stop_msg.drive.speed = 0.0
+        # Keep the latest obstacle-avoidance steering command while the vehicle
+        # decelerates instead of forcing the wheels straight on Ctrl+C.
+        stop_msg.drive.steering_angle = self.last_steering_angle
+
+        # Publish more than once so the stop command can reach the controller
+        # before this node and its DDS publisher are torn down.
+        for _ in range(3):
+            stop_msg.header.stamp = self.get_clock().now().to_msg()
+            self.publisher.publish(stop_msg)
+            time.sleep(0.05)
+
+        self.get_logger().info("Stop command published")
 
     def disparity_extender(self, ranges, angle_increment):
         # Start and end indices to process only the elements in front of the car
@@ -191,6 +238,8 @@ class ReactiveFollowGap(Node):
         drive_msg.header.stamp = self.get_clock().now().to_msg()
         
         angle = (best_index - len(ranges) / 2) * data.angle_increment
+        angle = float(np.clip(
+            angle, self.min_steering_angle, self.max_steering_angle))
 
 
         #These 3 lines are for visulizing
@@ -228,6 +277,7 @@ class ReactiveFollowGap(Node):
 
 
         drive_msg.drive.steering_angle = angle
+        self.last_steering_angle = angle
         set_speed = min(set_speed, 1.0)
         drive_msg.drive.speed = set_speed  # Set your desired speed
         self.publisher.publish(drive_msg)
@@ -276,10 +326,16 @@ class ReactiveFollowGap(Node):
 def main(args=None):
     rclpy.init(args=args)
     reactive_node = ReactiveFollowGap()
-    rclpy.spin(reactive_node)
-
-    reactive_node.destroy_node()
-    rclpy.shutdown()
+    try:
+        rclpy.spin(reactive_node)
+    except KeyboardInterrupt:
+        reactive_node.get_logger().info("Ctrl+C received, stopping vehicle")
+    finally:
+        if rclpy.ok():
+            reactive_node.stop_vehicle()
+        reactive_node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 if __name__ == '__main__':
     main()
