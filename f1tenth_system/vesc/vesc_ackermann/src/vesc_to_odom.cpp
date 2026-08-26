@@ -99,7 +99,9 @@ void VescToOdom::vescStateCallback(const VescStateStamped::SharedPtr state)
   }
 
   // convert to engineering units
-  double current_speed = (-state->state.speed - speed_to_erpm_offset_) / speed_to_erpm_gain_;
+  // double current_speed = (-state->state.speed - speed_to_erpm_offset_) / speed_to_erpm_gain_;
+  // 2026.08.26 Yuhao for blue car calibration.
+  double current_speed = -(-state->state.speed - speed_to_erpm_offset_) / speed_to_erpm_gain_;
   if (std::fabs(current_speed) < 0.05) {
     current_speed = 0.0;
   }
