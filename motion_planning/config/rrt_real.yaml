@@ -7,14 +7,13 @@ launch:
     - namespace: ''
       node_name: rrt_node
       ros__parameters:
-        global_pose_topic: /pf/pose/odom
         map_topic: /map
         scan_topic: /scan
         dynamic_map_topic: /motion_planning/dynamic_map
         drive_topic: /drive
         control_topic: /motion_planning/control
 
-        # Exact existing real-car TF frame IDs, consumed starting in Step 4.
+        # The localization source is abstracted behind these TF frames.
         map_frame: map
         laser_frame: laser
         vehicle_frame: base_link

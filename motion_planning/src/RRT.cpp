@@ -94,6 +94,15 @@ void RRT::load_parameters()
             "Bad configuration. Dynamic-obstacle timing must satisfy "
             "0 < update period <= persistence.");
     }
+    this->declare_parameter(
+        "PLANNING_UPDATE_PERIOD", planning_update_period_);
+    planning_update_period_ = this->get_parameter(
+        "PLANNING_UPDATE_PERIOD").as_double();
+    if (planning_update_period_ <= 0.0)
+    {
+        throw std::invalid_argument(
+            "Bad configuration. PLANNING_UPDATE_PERIOD must be > 0.");
+    }
 
     this->declare_parameter("MIN_RRT_ITERATIONS", minimum_rrt_iterations_);
     minimum_rrt_iterations_ =
@@ -294,9 +303,6 @@ void RRT::load_parameters()
             "with three values in [0, 1].");
     }
 
-    this->declare_parameter("global_pose_topic", global_pose_topic_);
-    global_pose_topic_ =
-        this->get_parameter("global_pose_topic").as_string();
     this->declare_parameter("map_topic", map_topic_);
     map_topic_ = this->get_parameter("map_topic").as_string();
     this->declare_parameter("scan_topic", scan_topic_);
@@ -310,13 +316,24 @@ void RRT::load_parameters()
     this->declare_parameter("fleet_control_topic", fleet_control_topic_);
     fleet_control_topic_ =
         this->get_parameter("fleet_control_topic").as_string();
-    if (global_pose_topic_.empty() || map_topic_.empty() ||
-        scan_topic_.empty() ||
+    if (map_topic_.empty() || scan_topic_.empty() ||
         dynamic_map_topic_.empty() || drive_topic_.empty() ||
         control_topic_.empty() || fleet_control_topic_.empty())
     {
         throw std::invalid_argument(
             "Bad configuration. ROS topic names must not be empty.");
+    }
+
+    this->declare_parameter("map_frame", map_frame_);
+    map_frame_ = this->get_parameter("map_frame").as_string();
+    this->declare_parameter("laser_frame", laser_frame_);
+    laser_frame_ = this->get_parameter("laser_frame").as_string();
+    this->declare_parameter("vehicle_frame", vehicle_frame_);
+    vehicle_frame_ = this->get_parameter("vehicle_frame").as_string();
+    if (map_frame_.empty() || laser_frame_.empty() || vehicle_frame_.empty())
+    {
+        throw std::invalid_argument(
+            "Bad configuration. TF frame names must not be empty.");
     }
 
     this->declare_parameter("start_on_launch", start_on_launch_);
@@ -372,8 +389,13 @@ void RRT::initialize_ros_interfaces()
     tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
-    laser_frame_ = (this->get_namespace() + laser_frame_).substr(1);
-    vehicle_frame_ = (this->get_namespace() + vehicle_frame_).substr(1);
+    const auto normalize_frame = [](std::string& frame)
+        {
+            frame.erase(0, frame.find_first_not_of('/'));
+        };
+    normalize_frame(map_frame_);
+    normalize_frame(laser_frame_);
+    normalize_frame(vehicle_frame_);
 
     const auto map_qos =
         rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable();
@@ -383,12 +405,6 @@ void RRT::initialize_ros_interfaces()
     scan_subscriber_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
         scan_topic_, 1,
         std::bind(&RRT::scan_callback, this, std::placeholders::_1));
-    global_pose_subscriber_ =
-        this->create_subscription<nav_msgs::msg::Odometry>(
-            global_pose_topic_, 1,
-            std::bind(
-                &RRT::global_pose_odometry_callback, this,
-                std::placeholders::_1));
     control_subscriber_ = this->create_subscription<std_msgs::msg::String>(
         control_topic_, 10,
         std::bind(&RRT::control_callback, this, std::placeholders::_1));
@@ -422,6 +438,11 @@ void RRT::initialize_ros_interfaces()
             drive_topic_, 1);
 
     initialize_visualization();
+    const auto planning_period = std::chrono::duration_cast<
+        std::chrono::nanoseconds>(
+            std::chrono::duration<double>(planning_update_period_));
+    planning_timer_ = this->create_wall_timer(
+        planning_period, std::bind(&RRT::planning_timer_callback, this));
 }
 
 void RRT::initialize_visualization()
@@ -528,10 +549,12 @@ bool RRT::lookup_laser_transform()
     return true;
 }
 
-bool RRT::lookup_vehicle_transform()
+bool RRT::lookup_vehicle_transforms()
 {
     try
     {
+        vehicle_to_map_ = tf_buffer_->lookupTransform(
+            map_frame_, vehicle_frame_, tf2::TimePointZero);
         map_to_vehicle_ = tf_buffer_->lookupTransform(
             vehicle_frame_, map_frame_, tf2::TimePointZero);
     }
@@ -647,24 +670,29 @@ void RRT::log_reference_transition(
     }
 }
 
-void RRT::global_pose_odometry_callback(
-    const nav_msgs::msg::Odometry::ConstSharedPtr message)
+void RRT::planning_timer_callback()
 {
-    update_global_pose(message->pose.pose);
+    if (!obstacle_map_.initialized())
+    {
+        return;
+    }
+    if (!lookup_vehicle_transforms())
+    {
+        stop_vehicle();
+        return;
+    }
+
+    geometry_msgs::msg::Pose global_pose;
+    global_pose.position.x = vehicle_to_map_.transform.translation.x;
+    global_pose.position.y = vehicle_to_map_.transform.translation.y;
+    global_pose.position.z = vehicle_to_map_.transform.translation.z;
+    global_pose.orientation = vehicle_to_map_.transform.rotation;
+    update_global_pose(global_pose);
 }
 
 void RRT::update_global_pose(const geometry_msgs::msg::Pose& global_pose)
 {
     current_global_pose_ = global_pose;
-    if (!obstacle_map_.initialized())
-    {
-        return;
-    }
-    if (!lookup_vehicle_transform())
-    {
-        stop_vehicle();
-        return;
-    }
 
     const reference_path::Decision reference = reference_manager_->update(
         current_global_pose_.position, obstacle_map_.collision_map(),

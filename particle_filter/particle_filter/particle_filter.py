@@ -74,7 +74,6 @@ class ParticleFiler(Node):
         self.declare_parameter('range_method')
         self.declare_parameter('rangelib_variant')
         self.declare_parameter('fine_timing')
-        self.declare_parameter('publish_odom')
         self.declare_parameter('viz')
         self.declare_parameter('z_short')
         self.declare_parameter('z_max')
@@ -97,7 +96,6 @@ class ParticleFiler(Node):
         self.WHICH_RM             = self.get_parameter('range_method').value
         self.RANGELIB_VAR         = self.get_parameter('rangelib_variant').value
         self.SHOW_FINE_TIMING     = self.get_parameter('fine_timing').value
-        self.PUBLISH_ODOM         = self.get_parameter('publish_odom').value
         self.DO_VIZ               = self.get_parameter('viz').value
 
         # sensor model constants
@@ -154,18 +152,12 @@ class ParticleFiler(Node):
         self.precompute_sensor_model()
         self.initialize_global()
 
-        # keep track of speed from input odom
-        self.current_speed = 0.0
-
         # Pub Subs
         # these topics are for visualization
         self.pose_pub = self.create_publisher(PoseStamped, '/pf/viz/inferred_pose', 1)
         self.particle_pub = self.create_publisher(PoseArray, '/pf/viz/particles', 1)
         self.pub_fake_scan = self.create_publisher(LaserScan, '/pf/viz/fake_scan', 1)
         self.rect_pub = self.create_publisher(PolygonStamped, '/pf/viz/poly1', 1)
-
-        if self.PUBLISH_ODOM:
-            self.odom_pub = self.create_publisher(Odometry, '/pf/pose/odom', 1)
 
         # these topics are for coordinate space things
         self.tf_buffer = Buffer()
@@ -289,19 +281,6 @@ class ParticleFiler(Node):
                     + str(ex))
                 self.tf_lookup_warning_emitted = True
 
-        # also publish odometry to facilitate getting the localization pose
-        if self.PUBLISH_ODOM:
-            odom = Odometry()
-            odom.header.stamp = self.get_clock().now().to_msg()
-            odom.header.frame_id = '/map'
-            odom.pose.pose.position.x = pose[0]
-            odom.pose.pose.position.y = pose[1]
-            odom.pose.pose.orientation = Utils.angle_to_quaternion(pose[2])
-            cov_mat = np.cov(self.particles, rowvar=False, ddof=0, aweights=self.weights).flatten()
-            odom.pose.covariance[:cov_mat.shape[0]] = cov_mat
-            odom.twist.twist.linear.x = self.current_speed
-            self.odom_pub.publish(odom)
-        
         return
 
     def visualize(self):
@@ -389,8 +368,6 @@ class ParticleFiler(Node):
 
         orientation = Utils.quaternion_to_angle(msg.pose.pose.orientation)
         pose = np.array([position[0], position[1], orientation])
-        self.current_speed = msg.twist.twist.linear.x
-
         if isinstance(self.last_pose, np.ndarray):
             # changes in x,y,theta in local coordinate system of the car
             rot = Utils.rotation_matrix(-self.last_pose[2])

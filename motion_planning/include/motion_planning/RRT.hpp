@@ -11,7 +11,6 @@
 #include "geometry_msgs/msg/pose.hpp"
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "nav_msgs/msg/occupancy_grid.hpp"
-#include "nav_msgs/msg/odometry.hpp"
 #include "nav_msgs/msg/path.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
@@ -82,13 +81,13 @@ private:
     // Dynamic-obstacle rolling window.
     double dynamic_obstacle_persistence_ = 0.3;
     double dynamic_map_update_period_ = 0.05;
+    double planning_update_period_ = 0.05;
 
     // LiDAR-only fallback speed control when no RRT* detour is available.
     double blocked_path_stop_distance_ = 0.5;
     double blocked_path_speed_gain_ = 2.0;
 
     // ROS names and runtime state.
-    std::string global_pose_topic_ = "/ego_racecar/odom";
     std::string map_topic_ = "/map";
     std::string scan_topic_ = "/scan";
     std::string dynamic_map_topic_ = "/ego_racecar/dynamic_map";
@@ -115,17 +114,15 @@ private:
     void control_callback(const std_msgs::msg::String::ConstSharedPtr message);
     void map_callback(const nav_msgs::msg::OccupancyGrid::ConstSharedPtr message);
     void scan_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr message);
-    /** Adapt the simulator Odometry message to the common global-pose input. */
-    void global_pose_odometry_callback(
-        const nav_msgs::msg::Odometry::ConstSharedPtr message);
+
+    /** Obtain map -> base_link from TF and run one planning cycle. */
+    void planning_timer_callback();
 
     /** Update the global vehicle pose and run the existing planning cycle. */
     void update_global_pose(const geometry_msgs::msg::Pose& global_pose);
 
     rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_subscriber_;
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_subscriber_;
-    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr
-        global_pose_subscriber_;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr control_subscriber_;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr
         fleet_control_subscriber_;
@@ -157,17 +154,18 @@ private:
     // TF is kept in the ROS layer; algorithm modules consume map-frame data.
     std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
-    std::string laser_frame_ = "/laser";
+    std::string laser_frame_ = "laser";
     std::string map_frame_ = "map";
-    std::string vehicle_frame_ = "/base_link";
+    std::string vehicle_frame_ = "base_link";
     geometry_msgs::msg::TransformStamped laser_to_map_;
+    geometry_msgs::msg::TransformStamped vehicle_to_map_;
     geometry_msgs::msg::TransformStamped map_to_vehicle_;
 
     /** Refresh the laser-to-map transform required by scan projection. */
     bool lookup_laser_transform();
 
-    /** Refresh the map-to-vehicle transform required by path tracking. */
-    bool lookup_vehicle_transform();
+    /** Refresh the vehicle global pose and inverse transform from TF. */
+    bool lookup_vehicle_transforms();
 
     /** Transform one point from laser frame to map frame. */
     geometry_msgs::msg::Point laser_point_to_map(
@@ -205,6 +203,7 @@ private:
     std::unique_ptr<MarkerVisualizer> lookahead_visualizer_;
     std::unique_ptr<PointsVisualizer> global_waypoints_visualizer_;
     rclcpp::TimerBase::SharedPtr global_waypoints_timer_;
+    rclcpp::TimerBase::SharedPtr planning_timer_;
     visualization_msgs::msg::Marker tree_nodes_;
     visualization_msgs::msg::Marker tree_branches_;
 };

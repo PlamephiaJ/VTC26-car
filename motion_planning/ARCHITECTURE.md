@@ -22,10 +22,9 @@ contracts for every interface.
 
 ## One global-pose update data flow
 
-1. The source-specific callback adapts its message to a
-   `geometry_msgs::msg::Pose`; `RRT::update_global_pose()` records that common
-   global-pose input and refreshes TF. The current simulator adapter reads the
-   pose from `nav_msgs::msg::Odometry::pose.pose`.
+1. A fixed-period planning callback reads `map -> base_link` from TF and passes
+   that pose to `RRT::update_global_pose()`. There is no source-specific pose
+   subscription; simulator and real-car localization have the same interface.
 2. `reference_path::Manager::update()` projects trajectory progress and creates
    the forward global goal plus local optimal reference.
 3. If the optimal arc is clear, the local optimal reference is used directly.
@@ -100,20 +99,21 @@ waypoints cannot be used accidentally.
 YAML. Set `launch.vehicle_mode` to `1` to launch only the first enabled vehicle,
 or to `2` to launch the first two. It starts a separate `rrt_node_sim` process for
 each selected car. The parameters under `rrt_node.ros__parameters` are shared
-by all instances, while each vehicle's `ros__parameters` override its global
-pose, scan, drive, dynamic-map, and control topics.
+by all instances, while each vehicle's `ros__parameters` override its TF
+frames, scan, drive, dynamic-map, and control topics.
 
 The shipped `config/rrt_sim.yaml` connects the two default gym agents as follows:
 
-| RRT namespace | Global pose source | Laser scan | Drive command | Start/stop control |
+| RRT namespace | Global pose TF | Laser scan | Drive command | Start/stop control |
 |---|---|---|---|---|
-| `/ego_racecar` | `/ego_racecar/odom` | `/scan` | `/drive` | `/ego_racecar/control` |
-| `/opp_racecar` | `/opp_racecar/odom` | `/opp_scan` | `/opp_drive` | `/opp_racecar/control` |
+| `/ego_racecar` | `map -> ego_racecar/base_link` | `/scan` | `/drive` | `/ego_racecar/control` |
+| `/opp_racecar` | `map -> opp_racecar/base_link` | `/opp_scan` | `/opp_drive` | `/opp_racecar/control` |
 
 The real configuration uses the existing root-namespace interfaces
-`/pf/pose/odom`, `/scan`, `/map`, and `/drive`. Exact `map_frame`,
-`laser_frame`, and `vehicle_frame` values are already separated in each
-environment configuration; Step 4 will make TF lookup consume those parameters.
+`/scan`, `/map`, and `/drive`, and obtains its global pose from
+`map -> base_link`. Exact `map_frame`, `laser_frame`, and `vehicle_frame`
+values are separated in each environment configuration and consumed directly
+by TF lookup.
 
 Each vehicle entry also owns its `SPEED_STRAIGHT`, `SPEED_MEDIUM_TURN`, and
 `SPEED_SHARP_TURN` values in metres per second. The shared low/medium steering
@@ -126,10 +126,11 @@ and RRT nodes. The default ego palette is blue/cyan and the opponent palette is
 orange/magenta.
 
 Both nodes share `/map`, but keep their dynamic maps and all relative
-visualization topics inside their own namespaces. The node derives each
-vehicle's TF frames from its namespace (`<namespace>/base_link` and
-`<namespace>/laser`). The original single-car `launch.namespace` YAML format
-is still supported when `launch.vehicles` is absent.
+visualization topics inside their own namespaces. Each vehicle's configured TF
+frames identify its `base_link` and `laser`; no pose topic or localization
+implementation is part of the planning interface. The original single-car
+`launch.namespace` YAML format is still supported when `launch.vehicles` is
+absent.
 
 With the default safety setting (`start_on_launch: false`), the per-vehicle
 topics still start or stop one car independently. The repository-level
