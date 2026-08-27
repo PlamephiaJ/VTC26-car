@@ -23,6 +23,7 @@
 # ros2 python
 import rclpy
 from rclpy.node import Node
+from rclpy.time import Time
 
 # libraries
 import numpy as np
@@ -34,7 +35,7 @@ from particle_filter import utils as Utils
 # TF
 # import tf.transformations
 # import tf
-from tf2_ros import TransformBroadcaster
+from tf2_ros import Buffer, TransformBroadcaster, TransformException, TransformListener
 import tf_transformations
 
 # messages
@@ -167,7 +168,10 @@ class ParticleFiler(Node):
             self.odom_pub = self.create_publisher(Odometry, '/pf/pose/odom', 1)
 
         # these topics are for coordinate space things
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
         self.pub_tf = TransformBroadcaster(self)
+        self.tf_lookup_warning_emitted = False
 
         # these topics are to receive data from the racecar
         self.laser_sub = self.create_subscription(
@@ -236,26 +240,55 @@ class ParticleFiler(Node):
         self.map_initialized = True
 
     def publish_tf(self, pose, stamp=None):
-        ''' Publish a tf for the car. This tells ROS where the car is with respect to the map. '''
-        if stamp == None:
+        """Publish map -> odom so the inferred laser pose is represented by the TF tree."""
+        if stamp is None:
             stamp = self.get_clock().now().to_msg()
 
-        t = TransformStamped()
-        # header
-        t.header.stamp = stamp
-        t.header.frame_id = '/map'
-        t.child_frame_id = '/laser'
-        # translation
-        t.transform.translation.x = pose[0]
-        t.transform.translation.y = pose[1]
-        t.transform.translation.z = 0.0
-        q = tf_transformations.quaternion_from_euler(0., 0., pose[2])
-        # rotation
-        t.transform.rotation.x = q[0]
-        t.transform.rotation.y = q[1]
-        t.transform.rotation.z = q[2]
-        t.transform.rotation.w = q[3]
-        self.pub_tf.sendTransform(t)
+        try:
+            odom_laser = self.tf_buffer.lookup_transform(
+                'odom', 'laser', Time.from_msg(stamp))
+
+            map_laser_matrix = tf_transformations.concatenate_matrices(
+                tf_transformations.translation_matrix([pose[0], pose[1], 0.0]),
+                tf_transformations.quaternion_matrix(
+                    tf_transformations.quaternion_from_euler(0.0, 0.0, pose[2])))
+            odom_laser_matrix = tf_transformations.concatenate_matrices(
+                tf_transformations.translation_matrix([
+                    odom_laser.transform.translation.x,
+                    odom_laser.transform.translation.y,
+                    odom_laser.transform.translation.z]),
+                tf_transformations.quaternion_matrix([
+                    odom_laser.transform.rotation.x,
+                    odom_laser.transform.rotation.y,
+                    odom_laser.transform.rotation.z,
+                    odom_laser.transform.rotation.w]))
+            map_odom_matrix = tf_transformations.concatenate_matrices(
+                map_laser_matrix,
+                tf_transformations.inverse_matrix(odom_laser_matrix))
+
+            translation = tf_transformations.translation_from_matrix(map_odom_matrix)
+            rotation = tf_transformations.quaternion_from_matrix(map_odom_matrix)
+
+            t = TransformStamped()
+            t.header.stamp = stamp
+            t.header.frame_id = 'map'
+            t.child_frame_id = 'odom'
+            t.transform.translation.x = translation[0]
+            t.transform.translation.y = translation[1]
+            t.transform.translation.z = translation[2]
+            t.transform.rotation.x = rotation[0]
+            t.transform.rotation.y = rotation[1]
+            t.transform.rotation.z = rotation[2]
+            t.transform.rotation.w = rotation[3]
+            self.pub_tf.sendTransform(t)
+            self.tf_lookup_warning_emitted = False
+        except TransformException as ex:
+            if not self.tf_lookup_warning_emitted:
+                self.get_logger().warning(
+                    'Cannot publish map -> odom: odom -> laser transform unavailable: '
+                    + str(ex))
+                self.tf_lookup_warning_emitted = True
+
         # also publish odometry to facilitate getting the localization pose
         if self.PUBLISH_ODOM:
             odom = Odometry()
