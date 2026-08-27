@@ -294,8 +294,9 @@ void RRT::load_parameters()
             "with three values in [0, 1].");
     }
 
-    this->declare_parameter("odom_topic", odom_topic_);
-    odom_topic_ = this->get_parameter("odom_topic").as_string();
+    this->declare_parameter("global_pose_topic", global_pose_topic_);
+    global_pose_topic_ =
+        this->get_parameter("global_pose_topic").as_string();
     this->declare_parameter("map_topic", map_topic_);
     map_topic_ = this->get_parameter("map_topic").as_string();
     this->declare_parameter("scan_topic", scan_topic_);
@@ -309,7 +310,8 @@ void RRT::load_parameters()
     this->declare_parameter("fleet_control_topic", fleet_control_topic_);
     fleet_control_topic_ =
         this->get_parameter("fleet_control_topic").as_string();
-    if (odom_topic_.empty() || map_topic_.empty() || scan_topic_.empty() ||
+    if (global_pose_topic_.empty() || map_topic_.empty() ||
+        scan_topic_.empty() ||
         dynamic_map_topic_.empty() || drive_topic_.empty() ||
         control_topic_.empty() || fleet_control_topic_.empty())
     {
@@ -381,9 +383,12 @@ void RRT::initialize_ros_interfaces()
     scan_subscriber_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
         scan_topic_, 1,
         std::bind(&RRT::scan_callback, this, std::placeholders::_1));
-    odom_subscriber_ = this->create_subscription<nav_msgs::msg::Odometry>(
-        odom_topic_, 1,
-        std::bind(&RRT::odom_callback, this, std::placeholders::_1));
+    global_pose_subscriber_ =
+        this->create_subscription<nav_msgs::msg::Odometry>(
+            global_pose_topic_, 1,
+            std::bind(
+                &RRT::global_pose_odometry_callback, this,
+                std::placeholders::_1));
     control_subscriber_ = this->create_subscription<std_msgs::msg::String>(
         control_topic_, 10,
         std::bind(&RRT::control_callback, this, std::placeholders::_1));
@@ -642,9 +647,15 @@ void RRT::log_reference_transition(
     }
 }
 
-void RRT::odom_callback(const nav_msgs::msg::Odometry::ConstSharedPtr message)
+void RRT::global_pose_odometry_callback(
+    const nav_msgs::msg::Odometry::ConstSharedPtr message)
 {
-    current_pose_ = message->pose.pose;
+    update_global_pose(message->pose.pose);
+}
+
+void RRT::update_global_pose(const geometry_msgs::msg::Pose& global_pose)
+{
+    current_global_pose_ = global_pose;
     if (!obstacle_map_.initialized())
     {
         return;
@@ -656,7 +667,7 @@ void RRT::odom_callback(const nav_msgs::msg::Odometry::ConstSharedPtr message)
     }
 
     const reference_path::Decision reference = reference_manager_->update(
-        current_pose_.position, obstacle_map_.collision_map(),
+        current_global_pose_.position, obstacle_map_.collision_map(),
         this->get_clock()->now().seconds());
     log_reference_transition(reference);
     visualize_goal(reference.global_goal);
@@ -674,7 +685,7 @@ void RRT::odom_callback(const nav_msgs::msg::Odometry::ConstSharedPtr message)
     }
 
     const rrt_star::PlanResult plan = planner_->plan(
-        {current_pose_.position.x, current_pose_.position.y},
+        {current_global_pose_.position.x, current_global_pose_.position.y},
         {reference.global_goal.x, reference.global_goal.y},
         obstacle_map_.collision_map(),
         obstacle_map_.base_map());
@@ -694,8 +705,8 @@ void RRT::odom_callback(const nav_msgs::msg::Odometry::ConstSharedPtr message)
     if (!plan.success)
     {
         const bool start_occupied = occupancy_grid::is_xy_coord_occupied(
-            obstacle_map_.collision_map(), current_pose_.position.x,
-            current_pose_.position.y);
+            obstacle_map_.collision_map(), current_global_pose_.position.x,
+            current_global_pose_.position.y);
         RCLCPP_WARN_THROTTLE(
             this->get_logger(), *this->get_clock(), 1000,
             "Could not find a path. Tree nodes: %zu, goal candidates: %zu, "

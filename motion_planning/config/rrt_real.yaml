@@ -1,0 +1,48 @@
+# Real-car ROS interfaces and conservative initial vehicle tuning. Shared
+# planner settings are in rrt_common.yaml. External PF, LiDAR, map, mux, and TF
+# publishers are not launched or modified here.
+launch:
+  vehicle_mode: 1
+  vehicles:
+    - namespace: ''
+      node_name: rrt_node
+      ros__parameters:
+        global_pose_topic: /pf/pose/odom
+        map_topic: /map
+        scan_topic: /scan
+        dynamic_map_topic: /motion_planning/dynamic_map
+        drive_topic: /drive
+        control_topic: /motion_planning/control
+
+        # Exact existing real-car TF frame IDs, consumed starting in Step 4.
+        map_frame: map
+        laser_frame: laser
+        vehicle_frame: base_link
+
+        # Deliberately conservative until validated on the physical vehicle.
+        SPEED_STRAIGHT: 1.5
+        SPEED_MEDIUM_TURN: 1.0
+        SPEED_SHARP_TURN: 0.5
+        VISUALIZATION_PRIMARY_COLOR: [0.10, 0.65, 1.00]
+        VISUALIZATION_ACCENT_COLOR: [0.00, 1.00, 0.65]
+
+rrt_node:
+  ros__parameters:
+    use_sim_time: false
+    fleet_control_topic: /motion_planning/control
+    start_on_launch: false
+
+    # A real map-specific trajectory is required. Keeping this empty prevents
+    # an accidental launch with simulator or test waypoints. Supply it with:
+    #   ros2 launch motion_planning rrt_real.launch.py waypoint_file:=/path.csv
+    waypoint_file_path: ''
+
+    # Vehicle/perception geometry and controller tuning.
+    MARGIN: 0.2
+    DISTANCE_GOAL_AHEAD: 3.5
+    SCAN_RANGE: 4.0
+    DETECTED_OBS_MARGIN: 0.22
+    DISTANCE_LOOK_AHEAD: 0.8
+    PID_P: 0.25
+    SPEED_LOW_STEERING_THRESHOLD_DEGREES: 10.0
+    SPEED_MEDIUM_STEERING_THRESHOLD_DEGREES: 20.0

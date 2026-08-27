@@ -88,7 +88,7 @@ private:
     double blocked_path_speed_gain_ = 2.0;
 
     // ROS names and runtime state.
-    std::string odom_topic_ = "/ego_racecar/odom";
+    std::string global_pose_topic_ = "/ego_racecar/odom";
     std::string map_topic_ = "/map";
     std::string scan_topic_ = "/scan";
     std::string dynamic_map_topic_ = "/ego_racecar/dynamic_map";
@@ -115,11 +115,17 @@ private:
     void control_callback(const std_msgs::msg::String::ConstSharedPtr message);
     void map_callback(const nav_msgs::msg::OccupancyGrid::ConstSharedPtr message);
     void scan_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr message);
-    void odom_callback(const nav_msgs::msg::Odometry::ConstSharedPtr message);
+    /** Adapt the simulator Odometry message to the common global-pose input. */
+    void global_pose_odometry_callback(
+        const nav_msgs::msg::Odometry::ConstSharedPtr message);
+
+    /** Update the global vehicle pose and run the existing planning cycle. */
+    void update_global_pose(const geometry_msgs::msg::Pose& global_pose);
 
     rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_subscriber_;
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_subscriber_;
-    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_subscriber_;
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr
+        global_pose_subscriber_;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr control_subscriber_;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr
         fleet_control_subscriber_;
@@ -138,7 +144,7 @@ private:
     std::unique_ptr<reference_path::Manager> reference_manager_;
     std::unique_ptr<rrt_star::Planner> planner_;
     std::vector<geometry_msgs::msg::Point> global_waypoints_;
-    geometry_msgs::msg::Pose current_pose_;
+    geometry_msgs::msg::Pose current_global_pose_;
 
     struct TimedObstacleFrame
     {

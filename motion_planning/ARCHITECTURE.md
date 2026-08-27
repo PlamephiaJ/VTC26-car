@@ -20,9 +20,12 @@ contracts for every interface.
 | Waypoint CSV input | `include/motion_planning/FileHandler.hpp` | `src/FileHandler.cpp` |
 | RViz marker wrappers | `include/motion_planning/Visualization.hpp` | `src/Visualization.cpp` |
 
-## One odometry-cycle data flow
+## One global-pose update data flow
 
-1. `RRT::odom_callback()` records the current pose and refreshes TF.
+1. The source-specific callback adapts its message to a
+   `geometry_msgs::msg::Pose`; `RRT::update_global_pose()` records that common
+   global-pose input and refreshes TF. The current simulator adapter reads the
+   pose from `nav_msgs::msg::Odometry::pose.pose`.
 2. `reference_path::Manager::update()` projects trajectory progress and creates
    the forward global goal plus local optimal reference.
 3. If the optimal arc is clear, the local optimal reference is used directly.
@@ -53,10 +56,10 @@ Laser scans follow a separate short flow:
 3. `RRT` retains sampled scans in a short rolling time window, rebuilds the
    dynamic layer at a configured fixed rate, and expires only old frames.
 
-No planner subscribes to another vehicle's odometry. A moving vehicle is just
-another obstacle observed by the current vehicle's own LiDAR. When RRT* cannot
-find a detour, the node measures the arc distance to the first occupied point
-on its blocked optimal reference and applies a proportional speed cap. It
+No planner subscribes to another vehicle's global pose. A moving vehicle is
+just another obstacle observed by the current vehicle's own LiDAR. When RRT*
+cannot find a detour, the node measures the arc distance to the first occupied
+point on its blocked optimal reference and applies a proportional speed cap. It
 therefore slows or stops using only its own perception. Returning from RRT mode
 also requires all safe-rejoin conditions to remain continuously true for the
 configured clearance time, which rejects one-frame obstacle dropouts.
@@ -77,19 +80,40 @@ work localized.
 
 ## Running two vehicles
 
-`launch/rrt.launch.py` accepts a `launch.vehicles` list in the selected YAML.
-Set `launch.vehicle_mode` to `1` to launch only the first enabled vehicle, or
-to `2` to launch the first two. It starts a separate `rrt_node_sim` process for
+Configuration is split by responsibility:
+
+- `config/rrt_common.yaml` contains environment-independent planner,
+  reference-path, and fallback-control parameters;
+- `config/rrt_sim.yaml` contains simulator topics, namespaces, exact frame IDs,
+  waypoint source, vehicle/controller tuning, speeds, and colors;
+- `config/rrt_real.yaml` contains the corresponding real-car interfaces and
+  conservative initial speeds.
+
+`launch/rrt.launch.py` recursively merges the selected environment file over
+the common file. `launch/rrt_sim.launch.py` and `launch/rrt_real.launch.py` are
+the normal entry points. Both accept `waypoint_file:=/absolute/path.csv`; the
+override keeps workstation- and map-specific paths out of shared planner
+settings. The real launch intentionally requires this override so simulator
+waypoints cannot be used accidentally.
+
+`rrt.launch.py` accepts a `launch.vehicles` list in the selected environment
+YAML. Set `launch.vehicle_mode` to `1` to launch only the first enabled vehicle,
+or to `2` to launch the first two. It starts a separate `rrt_node_sim` process for
 each selected car. The parameters under `rrt_node.ros__parameters` are shared
-by all instances, while each vehicle's `ros__parameters` override its odometry,
-scan, drive, dynamic-map, and control topics.
+by all instances, while each vehicle's `ros__parameters` override its global
+pose, scan, drive, dynamic-map, and control topics.
 
-The shipped `config/rrt.yaml` connects the two default gym agents as follows:
+The shipped `config/rrt_sim.yaml` connects the two default gym agents as follows:
 
-| RRT namespace | Odometry | Laser scan | Drive command | Start/stop control |
+| RRT namespace | Global pose source | Laser scan | Drive command | Start/stop control |
 |---|---|---|---|---|
 | `/ego_racecar` | `/ego_racecar/odom` | `/scan` | `/drive` | `/ego_racecar/control` |
 | `/opp_racecar` | `/opp_racecar/odom` | `/opp_scan` | `/opp_drive` | `/opp_racecar/control` |
+
+The real configuration uses the existing root-namespace interfaces
+`/pf/pose/odom`, `/scan`, `/map`, and `/drive`. Exact `map_frame`,
+`laser_frame`, and `vehicle_frame` values are already separated in each
+environment configuration; Step 4 will make TF lookup consume those parameters.
 
 Each vehicle entry also owns its `SPEED_STRAIGHT`, `SPEED_MEDIUM_TURN`, and
 `SPEED_SHARP_TURN` values in metres per second. The shared low/medium steering
