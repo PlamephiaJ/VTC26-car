@@ -7,6 +7,8 @@ launch:
     - namespace: ego_racecar
       node_name: rrt_node
       ros__parameters:
+        # Vehicle state only; global pose still comes from TF.
+        odometry_topic: /ego_racecar/odom
         map_topic: /map
         scan_topic: /scan
         dynamic_map_topic: /ego_racecar/dynamic_map
@@ -27,6 +29,8 @@ launch:
     - namespace: opp_racecar
       node_name: rrt_node
       ros__parameters:
+        # Vehicle state only; global pose still comes from TF.
+        odometry_topic: /opp_racecar/odom
         map_topic: /map
         scan_topic: /opp_scan
         dynamic_map_topic: /opp_racecar/dynamic_map

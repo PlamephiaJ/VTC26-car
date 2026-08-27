@@ -7,6 +7,8 @@ launch:
     - namespace: ''
       node_name: rrt_node
       ros__parameters:
+        # Vehicle state only; pose from this message is intentionally ignored.
+        odometry_topic: /odom
         map_topic: /map
         scan_topic: /scan
         dynamic_map_topic: /motion_planning/dynamic_map

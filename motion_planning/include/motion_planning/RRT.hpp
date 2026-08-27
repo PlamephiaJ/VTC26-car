@@ -11,6 +11,7 @@
 #include "geometry_msgs/msg/pose.hpp"
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "nav_msgs/msg/occupancy_grid.hpp"
+#include "nav_msgs/msg/odometry.hpp"
 #include "nav_msgs/msg/path.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
@@ -88,6 +89,7 @@ private:
     double blocked_path_speed_gain_ = 2.0;
 
     // ROS names and runtime state.
+    std::string odometry_topic_ = "/odom";
     std::string map_topic_ = "/map";
     std::string scan_topic_ = "/scan";
     std::string dynamic_map_topic_ = "/ego_racecar/dynamic_map";
@@ -97,6 +99,9 @@ private:
     std::string waypoint_file_path_;
     bool start_on_launch_ = false;
     bool is_vehicle_enabled_ = false;
+    double current_speed_ = 0.0;
+    double current_yaw_rate_ = 0.0;
+    double last_commanded_steering_angle_ = 0.0;
 
     /** Load and validate all ROS parameters. Throws on invalid configuration. */
     void load_parameters();
@@ -115,6 +120,10 @@ private:
     void map_callback(const nav_msgs::msg::OccupancyGrid::ConstSharedPtr message);
     void scan_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr message);
 
+    /** Update vehicle speed/yaw rate only; global pose always comes from TF. */
+    void odometry_callback(
+        const nav_msgs::msg::Odometry::ConstSharedPtr message);
+
     /** Obtain map -> base_link from TF and run one planning cycle. */
     void planning_timer_callback();
 
@@ -123,6 +132,7 @@ private:
 
     rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_subscriber_;
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_subscriber_;
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odometry_subscriber_;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr control_subscriber_;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr
         fleet_control_subscriber_;

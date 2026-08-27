@@ -34,6 +34,10 @@ contracts for every interface.
    steering/speed on whichever local reference is active.
 6. `RRT` publishes the path/tree markers and Ackermann command.
 
+The configured `odometry_topic` is a separate vehicle-state input. Its
+`twist.twist.linear.x` and `twist.twist.angular.z` update current speed and yaw
+rate; its pose is deliberately ignored and never participates in localization.
+
 The optimal trajectory precomputes segment and cumulative arc lengths once.
 After the first global projection, progress updates search only the configured
 backward/forward arc window. A global projection is retried only when the local
@@ -100,7 +104,7 @@ YAML. Set `launch.vehicle_mode` to `1` to launch only the first enabled vehicle,
 or to `2` to launch the first two. It starts a separate `rrt_node_sim` process for
 each selected car. The parameters under `rrt_node.ros__parameters` are shared
 by all instances, while each vehicle's `ros__parameters` override its TF
-frames, scan, drive, dynamic-map, and control topics.
+frames, odometry-state, scan, drive, dynamic-map, and control topics.
 
 The shipped `config/rrt_sim.yaml` connects the two default gym agents as follows:
 

@@ -303,6 +303,8 @@ void RRT::load_parameters()
             "with three values in [0, 1].");
     }
 
+    this->declare_parameter("odometry_topic", odometry_topic_);
+    odometry_topic_ = this->get_parameter("odometry_topic").as_string();
     this->declare_parameter("map_topic", map_topic_);
     map_topic_ = this->get_parameter("map_topic").as_string();
     this->declare_parameter("scan_topic", scan_topic_);
@@ -316,7 +318,7 @@ void RRT::load_parameters()
     this->declare_parameter("fleet_control_topic", fleet_control_topic_);
     fleet_control_topic_ =
         this->get_parameter("fleet_control_topic").as_string();
-    if (map_topic_.empty() || scan_topic_.empty() ||
+    if (odometry_topic_.empty() || map_topic_.empty() || scan_topic_.empty() ||
         dynamic_map_topic_.empty() || drive_topic_.empty() ||
         control_topic_.empty() || fleet_control_topic_.empty())
     {
@@ -405,6 +407,9 @@ void RRT::initialize_ros_interfaces()
     scan_subscriber_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
         scan_topic_, 1,
         std::bind(&RRT::scan_callback, this, std::placeholders::_1));
+    odometry_subscriber_ = this->create_subscription<nav_msgs::msg::Odometry>(
+        odometry_topic_, 1,
+        std::bind(&RRT::odometry_callback, this, std::placeholders::_1));
     control_subscriber_ = this->create_subscription<std_msgs::msg::String>(
         control_topic_, 10,
         std::bind(&RRT::control_callback, this, std::placeholders::_1));
@@ -670,6 +675,15 @@ void RRT::log_reference_transition(
     }
 }
 
+void RRT::odometry_callback(
+    const nav_msgs::msg::Odometry::ConstSharedPtr message)
+{
+    // Odometry is vehicle-state input only. Its pose is intentionally ignored;
+    // localization is obtained exclusively from map -> base_link TF.
+    current_speed_ = message->twist.twist.linear.x;
+    current_yaw_rate_ = message->twist.twist.angular.z;
+}
+
 void RRT::planning_timer_callback()
 {
     if (!obstacle_map_.initialized())
@@ -819,6 +833,7 @@ void RRT::follow_path(
     command.drive.speed = static_cast<float>(commanded_speed);
     command.drive.steering_angle = steering;
     command.drive.steering_angle_velocity = 1.0;
+    last_commanded_steering_angle_ = steering;
     if (is_vehicle_enabled_)
     {
         drive_publisher_->publish(command);
@@ -841,6 +856,7 @@ void RRT::stop_vehicle()
     command.header.stamp = this->now();
     command.drive.speed = 0.0;
     command.drive.steering_angle = 0.0;
+    last_commanded_steering_angle_ = 0.0;
     drive_publisher_->publish(command);
 }
 
