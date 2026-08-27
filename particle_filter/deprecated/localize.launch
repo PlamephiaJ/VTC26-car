@@ -24,8 +24,8 @@
 			       Fast performance on the CPU but long initialization time.
 		max_range: maximum range of the laser scanner in meters. Measured ranges beyond max_range are clipped.
 		fine_timing: prints extra timing information, useful for profiling the particle filter
-		publish_odom: whether or not to publish inferred pose as an odometry message.
-		              publishes on /pf/pose/odom
+			publish_laser_global_pose: whether to publish the inferred laser-frame
+			                           pose in map on /pf/laser_global_pose.
 	 -->
 	<include file="$(find particle_filter)/launch/map_server.launch"/>
 
@@ -52,7 +52,7 @@
 		<param name="max_range" value="10"/> 
 		<param name="viz" value="$(arg viz)"/> 
 		<param name="fine_timing" value="0"/> 
-		<param name="publish_odom" value="1"/> 
+		<param name="publish_laser_global_pose" value="1"/>
 
 		<!-- sensor model constants, see sensor model section in the Lab5 guide document -->
 		<param name="z_short" value="0.01"/> 

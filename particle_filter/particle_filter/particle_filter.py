@@ -85,6 +85,8 @@ class ParticleFiler(Node):
         self.declare_parameter('motion_dispersion_theta')
         self.declare_parameter('scan_topic')
         self.declare_parameter('odometry_topic')
+        self.declare_parameter(
+            'laser_global_pose_topic', '/pf/laser_global_pose')
 
         # parameters
         self.ANGLE_STEP           = self.get_parameter('angle_step').value
@@ -152,12 +154,21 @@ class ParticleFiler(Node):
         self.precompute_sensor_model()
         self.initialize_global()
 
+        # Kept only for the observation topic's existing twist field.
+        self.current_speed = 0.0
+
         # Pub Subs
         # these topics are for visualization
         self.pose_pub = self.create_publisher(PoseStamped, '/pf/viz/inferred_pose', 1)
         self.particle_pub = self.create_publisher(PoseArray, '/pf/viz/particles', 1)
         self.pub_fake_scan = self.create_publisher(LaserScan, '/pf/viz/fake_scan', 1)
         self.rect_pub = self.create_publisher(PolygonStamped, '/pf/viz/poly1', 1)
+
+        # This Odometry message reports the laser frame pose in the map frame.
+        self.laser_global_pose_pub = self.create_publisher(
+            Odometry,
+            self.get_parameter('laser_global_pose_topic').value,
+            1)
 
         # these topics are for coordinate space things
         self.tf_buffer = Buffer()
@@ -281,6 +292,21 @@ class ParticleFiler(Node):
                     + str(ex))
                 self.tf_lookup_warning_emitted = True
 
+        # Preserve the former pose observation payload under an explicit name.
+        # pose.pose is T_map_laser; this is not wheel odometry or T_map_odom.
+        laser_global_pose = Odometry()
+        laser_global_pose.header.stamp = self.get_clock().now().to_msg()
+        laser_global_pose.header.frame_id = '/map'
+        laser_global_pose.pose.pose.position.x = pose[0]
+        laser_global_pose.pose.pose.position.y = pose[1]
+        laser_global_pose.pose.pose.orientation = Utils.angle_to_quaternion(pose[2])
+        cov_mat = np.cov(
+            self.particles, rowvar=False, ddof=0,
+            aweights=self.weights).flatten()
+        laser_global_pose.pose.covariance[:cov_mat.shape[0]] = cov_mat
+        laser_global_pose.twist.twist.linear.x = self.current_speed
+        self.laser_global_pose_pub.publish(laser_global_pose)
+
         return
 
     def visualize(self):
@@ -368,6 +394,8 @@ class ParticleFiler(Node):
 
         orientation = Utils.quaternion_to_angle(msg.pose.pose.orientation)
         pose = np.array([position[0], position[1], orientation])
+        self.current_speed = msg.twist.twist.linear.x
+
         if isinstance(self.last_pose, np.ndarray):
             # changes in x,y,theta in local coordinate system of the car
             rot = Utils.rotation_matrix(-self.last_pose[2])

@@ -3,6 +3,8 @@ particle_filter:
     # topic names
     scan_topic: '/scan'
     odometry_topic: '/odom'
+    # Observation output: pose of the laser frame expressed in the map frame.
+    laser_global_pose_topic: '/pf/laser_global_pose'
     # range data downsampling
     angle_step: 18
     max_particles: 4000

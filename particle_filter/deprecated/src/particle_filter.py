@@ -49,7 +49,8 @@ class ParticleFiler():
         self.WHICH_RM          = rospy.get_param("~range_method", "cddt").lower()
         self.RANGELIB_VAR      = int(rospy.get_param("~rangelib_variant", "3"))
         self.SHOW_FINE_TIMING  = bool(rospy.get_param("~fine_timing", "0"))
-        self.PUBLISH_ODOM      = bool(rospy.get_param("~publish_odom", "1"))
+        self.PUBLISH_LASER_GLOBAL_POSE = bool(
+            rospy.get_param("~publish_laser_global_pose", "1"))
         self.DO_VIZ            = bool(rospy.get_param("~viz"))
 
         # sensor model constants
@@ -113,8 +114,9 @@ class ParticleFiler():
         self.pub_fake_scan = rospy.Publisher("/pf/viz/fake_scan", LaserScan, queue_size = 1)
         self.rect_pub      = rospy.Publisher("/pf/viz/poly1", PolygonStamped, queue_size = 1)
 
-        if self.PUBLISH_ODOM:
-            self.odom_pub = rospy.Publisher("/pf/pose/odom", Odometry, queue_size = 1)
+        if self.PUBLISH_LASER_GLOBAL_POSE:
+            self.laser_global_pose_pub = rospy.Publisher(
+                "/pf/laser_global_pose", Odometry, queue_size = 1)
 
         # these topics are for coordinate space things
         self.pub_tf = tf.TransformBroadcaster()
@@ -176,8 +178,8 @@ class ParticleFiler():
         self.pub_tf.sendTransform((pose[0],pose[1],0),tf.transformations.quaternion_from_euler(0, 0, pose[2]), 
                stamp , "/laser", "/map")
 
-        # also publish odometry to facilitate getting the localization pose
-        if self.PUBLISH_ODOM:
+        # This message reports the laser frame pose in the map frame.
+        if self.PUBLISH_LASER_GLOBAL_POSE:
             odom = Odometry()
             odom.header = Utils.make_header("/map", stamp)
             odom.pose.pose.position.x = pose[0]
@@ -186,7 +188,7 @@ class ParticleFiler():
             cov_mat = np.cov(self.particles, rowvar=False, ddof=0, aweights=self.weights).flatten()
             odom.pose.covariance[:cov_mat.shape[0]] = cov_mat
             odom.twist.twist.linear.x = self.current_speed
-            self.odom_pub.publish(odom)
+            self.laser_global_pose_pub.publish(odom)
         
         return # below this line is disabled
 
