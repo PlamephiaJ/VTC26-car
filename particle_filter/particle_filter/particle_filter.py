@@ -300,10 +300,10 @@ class ParticleFiler(Node):
         laser_global_pose.pose.pose.position.x = pose[0]
         laser_global_pose.pose.pose.position.y = pose[1]
         laser_global_pose.pose.pose.orientation = Utils.angle_to_quaternion(pose[2])
-        cov_mat = np.cov(
-            self.particles, rowvar=False, ddof=0,
-            aweights=self.weights).flatten()
-        laser_global_pose.pose.covariance[:cov_mat.shape[0]] = cov_mat
+        pose_covariance = Utils.weighted_pose_covariance(
+            self.particles, self.weights, pose)
+        laser_global_pose.pose.covariance = Utils.planar_covariance_to_ros(
+            pose_covariance)
         laser_global_pose.twist.twist.linear.x = self.current_speed
         self.laser_global_pose_pub.publish(laser_global_pose)
 
@@ -402,7 +402,9 @@ class ParticleFiler(Node):
             delta = np.array([position - self.last_pose[0:2]]).transpose()
             local_delta = (rot*delta).transpose()
             
-            self.odometry_data = np.array([local_delta[0,0], local_delta[0,1], orientation - self.last_pose[2]])
+            yaw_delta = Utils.angle_difference(orientation, self.last_pose[2])
+            self.odometry_data = np.array([
+                local_delta[0, 0], local_delta[0, 1], yaw_delta])
             self.last_pose = pose
             self.last_stamp = msg.header.stamp
             self.odom_initialized = True
@@ -432,7 +434,10 @@ class ParticleFiler(Node):
         self.weights = np.ones(self.MAX_PARTICLES) / float(self.MAX_PARTICLES)
         self.particles[:,0] = pose.position.x + np.random.normal(loc=0.0,scale=0.5,size=self.MAX_PARTICLES)
         self.particles[:,1] = pose.position.y + np.random.normal(loc=0.0,scale=0.5,size=self.MAX_PARTICLES)
-        self.particles[:,2] = Utils.quaternion_to_angle(pose.orientation) + np.random.normal(loc=0.0,scale=0.4,size=self.MAX_PARTICLES)
+        yaw = Utils.quaternion_to_angle(pose.orientation)
+        self.particles[:, 2] = Utils.wrap_angle(
+            yaw + np.random.normal(
+                loc=0.0, scale=0.4, size=self.MAX_PARTICLES))
         self.state_lock.release()
 
     def initialize_global(self):
@@ -534,6 +539,7 @@ class ParticleFiler(Node):
         proposal_dist[:,0] += np.random.normal(loc=0.0,scale=self.MOTION_DISPERSION_X,size=self.MAX_PARTICLES)
         proposal_dist[:,1] += np.random.normal(loc=0.0,scale=self.MOTION_DISPERSION_Y,size=self.MAX_PARTICLES)
         proposal_dist[:,2] += np.random.normal(loc=0.0,scale=self.MOTION_DISPERSION_THETA,size=self.MAX_PARTICLES)
+        proposal_dist[:, 2] = Utils.wrap_angle(proposal_dist[:, 2])
 
     def sensor_model(self, proposal_dist, obs, weights):
         '''
@@ -682,7 +688,7 @@ class ParticleFiler(Node):
     
     def expected_pose(self):
         # returns the expected value of the pose given the particle distribution
-        return np.dot(self.particles.transpose(), self.weights)
+        return Utils.weighted_pose_mean(self.particles, self.weights)
 
     def update(self):
         '''

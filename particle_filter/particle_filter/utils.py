@@ -7,6 +7,83 @@ import tf_transformations
 # import tf2_ros
 import time
 
+
+def wrap_angle(angle):
+    """Wrap an angle or array of angles to the interval [-pi, pi]."""
+    return np.arctan2(np.sin(angle), np.cos(angle))
+
+
+def angle_difference(angle, reference):
+    """Return the shortest signed angular difference from reference to angle."""
+    return wrap_angle(angle - reference)
+
+
+def _normalized_weights(weights):
+    """Return finite, non-negative weights normalized to sum to one."""
+    normalized = np.asarray(weights, dtype=float)
+    if normalized.ndim != 1:
+        raise ValueError('weights must be one-dimensional')
+    if not np.all(np.isfinite(normalized)) or np.any(normalized < 0.0):
+        raise ValueError('weights must be finite and non-negative')
+
+    total = np.sum(normalized)
+    if total <= 0.0:
+        raise ValueError('weights must have a positive sum')
+    return normalized / total
+
+
+def weighted_pose_mean(poses, weights):
+    """Compute the weighted mean of planar [x, y, yaw] poses."""
+    poses = np.asarray(poses, dtype=float)
+    normalized = _normalized_weights(weights)
+    if poses.ndim != 2 or poses.shape != (normalized.size, 3):
+        raise ValueError('poses must have shape (len(weights), 3)')
+
+    mean = np.empty(3, dtype=float)
+    mean[:2] = np.sum(poses[:, :2] * normalized[:, None], axis=0)
+    sin_sum = np.dot(np.sin(poses[:, 2]), normalized)
+    cos_sum = np.dot(np.cos(poses[:, 2]), normalized)
+
+    # A circular mean is undefined for a uniform or exactly opposed angular
+    # distribution. Use an actual particle direction instead of an angle chosen
+    # by floating-point cancellation in that case.
+    if np.hypot(sin_sum, cos_sum) < 1.0e-12:
+        mean[2] = wrap_angle(poses[np.argmax(normalized), 2])
+    else:
+        mean[2] = np.arctan2(sin_sum, cos_sum)
+    return mean
+
+
+def weighted_pose_covariance(poses, weights, mean=None):
+    """Compute planar pose covariance using wrapped residuals for yaw."""
+    poses = np.asarray(poses, dtype=float)
+    normalized = _normalized_weights(weights)
+    if poses.ndim != 2 or poses.shape != (normalized.size, 3):
+        raise ValueError('poses must have shape (len(weights), 3)')
+    if mean is None:
+        mean = weighted_pose_mean(poses, normalized)
+    else:
+        mean = np.asarray(mean, dtype=float)
+        if mean.shape != (3,):
+            raise ValueError('mean must have shape (3,)')
+
+    residuals = poses - mean
+    residuals[:, 2] = angle_difference(poses[:, 2], mean[2])
+    return (residuals * normalized[:, None]).T @ residuals
+
+
+def planar_covariance_to_ros(covariance):
+    """Embed an [x, y, yaw] covariance in a ROS 6D pose covariance."""
+    covariance = np.asarray(covariance, dtype=float)
+    if covariance.shape != (3, 3):
+        raise ValueError('planar covariance must have shape (3, 3)')
+
+    ros_covariance = np.zeros((6, 6))
+    planar_indices = np.array([0, 1, 5])
+    ros_covariance[np.ix_(planar_indices, planar_indices)] = covariance
+    return ros_covariance.flatten().tolist()
+
+
 class CircularArray(object):
     """ Simple implementation of a circular array.
         You can append to it any number of times but only "size" items will be kept
@@ -111,7 +188,7 @@ def map_to_world_slow(x,y,t,map_info):
                       [y]])
     world = (rot*map_c) * scale + trans
 
-    return world[0,0],world[1,0],t+angle
+    return world[0, 0], world[1, 0], wrap_angle(t + angle)
 
 def map_to_world(poses, map_info):
     ''' Takes a two dimensional numpy array of poses:
@@ -141,7 +218,7 @@ def map_to_world(poses, map_info):
     # translate
     poses[:,0] += map_info.origin.position.x
     poses[:,1] += map_info.origin.position.y
-    poses[:,2] += angle
+    poses[:, 2] = wrap_angle(poses[:, 2] + angle)
 
 def world_to_map(poses, map_info):
     ''' Takes a two dimensional numpy array of poses:
@@ -171,7 +248,7 @@ def world_to_map(poses, map_info):
     temp = np.copy(poses[:,0])
     poses[:,0] = c*poses[:,0] - s*poses[:,1]
     poses[:,1] = s*temp       + c*poses[:,1]
-    poses[:,2] += angle
+    poses[:, 2] = wrap_angle(poses[:, 2] + angle)
 
 def world_to_map_slow(x,y,t, map_info):
     ''' Converts given (x,y,t) coordinates from the coordinate space of the world (meters) into map coordinates (pixels).
@@ -187,4 +264,4 @@ def world_to_map_slow(x,y,t, map_info):
     world = np.array([[x],
                       [y]])
     map_c = rot*((world - trans) / float(scale))
-    return map_c[0,0],map_c[1,0],t-angle
+    return map_c[0, 0], map_c[1, 0], wrap_angle(t - angle)
