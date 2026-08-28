@@ -1,3 +1,6 @@
 [submodule "motion_planning"]
 	path = motion_planning
 	url = https://github.com/PlamephiaJ/motion_planning
+[submodule "trajectory_planner"]
+	path = trajectory_planner
+	url = https://github.com/PlamephiaJ/trajectory_planner.git
