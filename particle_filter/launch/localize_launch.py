@@ -35,8 +35,18 @@ def generate_launch_description():
         'config',
         'localize.yaml'
     )
-    localize_config_dict = yaml.safe_load(open(localize_config, 'r'))
-    map_name = localize_config_dict['map_server']['ros__parameters']['map']
+    with open(localize_config, 'r') as config_file:
+        localize_config_dict = yaml.safe_load(config_file)
+
+    map_path = os.path.expanduser(
+        localize_config_dict['map_server']['ros__parameters']['map']
+    )
+    if not os.path.isabs(map_path):
+        map_path = os.path.join(
+            get_package_share_directory('particle_filter'), 'maps', map_path
+        )
+    if not map_path.endswith('.yaml'):
+        map_path += '.yaml'
     localize_la = DeclareLaunchArgument(
         'localize_config',
         default_value=localize_config,
@@ -54,7 +64,7 @@ def generate_launch_description():
         package='nav2_map_server',
         executable='map_server',
         name='map_server',
-        parameters=[{'yaml_filename': os.path.join(get_package_share_directory('particle_filter'), 'maps', map_name + '.yaml')},
+        parameters=[{'yaml_filename': map_path},
                     {'topic': 'map'},
                     {'frame_id': 'map'},
                     {'output': 'screen'},
