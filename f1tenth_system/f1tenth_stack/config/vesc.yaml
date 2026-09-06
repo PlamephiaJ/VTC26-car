@@ -2,11 +2,19 @@
   # general parameters shared by all vesc-related nodes
   ros__parameters:
     # erpm (electrical rpm) = speed_to_erpm_gain * speed (meters / second) + speed_to_erpm_offset
-    speed_to_erpm_gain: 3314.0 # was 3314.0, odom is a little big
+    speed_to_erpm_gain: 4290.0 # was 3314.0, odom is a little big
+    # real 3.99m  measure 4.9259 gain 3314.0
+    # real 3.1m measure 3.8902 gain 3214.0 
+    # real 3.22m measure 4.1285 gain 3014.0
+    # real 4.2m measure 4.4623 gain 4000.0
+    # real 3.77m measure 3.8389 gain 4250.0
+    # real 3.33m measure 3.2931 gain 4327.67
+
     speed_to_erpm_offset: 0.0
 
     # servo value (0 to 1) =  steering_angle_to_servo_gain * steering angle (radians) + steering_angle_to_servo_offset
-    steering_angle_to_servo_gain: -0.7135 # was 0.7135 radius is big 1cm
+    steering_angle_to_servo_gain: -0.7791 # was 0.7135 radius is big 1cm   
+    # 1.94 = 0.7135  0.6135 = 2.24  0.8135 = 1.7  0.8035 = 1.72
     steering_angle_to_servo_offset: 0.5100 # was 0.5180 to right
 
     port: /dev/sensors/vesc
