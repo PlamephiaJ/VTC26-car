@@ -30,31 +30,17 @@ class ReactiveFollowGap(Node):
         self.max_distance = 3.5   # max distance to consider for a valid gap
         self.disparity_thresh = 0.15
         self.last_steering_angle = 0.0
-        self.declare_parameter('max_speed', 3.0)
-        self.max_speed = float(self.get_parameter('max_speed').value)
-        self.declare_parameter('max_deceleration', 2.5)
-        self.declare_parameter('braking_stop_margin', 0.30)
-        self.max_deceleration = float(
-            self.get_parameter('max_deceleration').value)
-        self.braking_stop_margin = float(
-            self.get_parameter('braking_stop_margin').value)
-        if self.max_speed <= 0.0:
-            raise ValueError('max_speed must be positive')
-        if self.max_deceleration <= 0.0:
-            raise ValueError('max_deceleration must be positive')
-        if self.braking_stop_margin < 0.0:
-            raise ValueError('braking_stop_margin cannot be negative')
-        self.last_commanded_speed = 0.0
-        self.last_command_time = None
-        self.declare_parameter('prefer_left_at_fork', True)
+
+        # When several branches have almost the same clearance, choose the
+        # left-most one.  A value of 0.9 means that a left gap must retain at
+        # least 90% of the clearance of the deepest gap before it is preferred.
         self.declare_parameter('left_branch_depth_ratio', 0.90)
         self.declare_parameter('minimum_gap_angle', 0.12)
-        self.prefer_left_at_fork = bool(
-            self.get_parameter('prefer_left_at_fork').value)
         self.left_branch_depth_ratio = float(self.get_parameter(
             'left_branch_depth_ratio').value)
         self.minimum_gap_angle = float(self.get_parameter(
             'minimum_gap_angle').value)
+
         if not 0.0 < self.left_branch_depth_ratio <= 1.0:
             self.get_logger().warning(
                 'left_branch_depth_ratio must be in (0, 1]; using 0.90')
@@ -192,28 +178,35 @@ class ReactiveFollowGap(Node):
         return start_i, end_i
 
     def find_best_point(self, ranges, angle_increment):
-        """Choose a deep gap, resolving similarly open branches to the left."""
+        """Choose the left-most gap whose depth is close to the best one.
+
+        LaserScan indices increase from negative angles (right) to positive
+        angles (left), so a larger weighted-center index means a more leftward
+        path.  The depth threshold prevents the left preference from choosing
+        a substantially more obstructed route.
+        """
         scan_start = 180
         scan_end = len(ranges) - 180
         gaps = []
         gap_start = None
 
-        for index in range(scan_start, scan_end + 1):
-            in_free_space = index < scan_end and ranges[index] > 0
+        for i in range(scan_start, scan_end + 1):
+            in_free_space = i < scan_end and ranges[i] > 0
             if in_free_space and gap_start is None:
-                gap_start = index
+                gap_start = i
             elif not in_free_space and gap_start is not None:
-                segment = ranges[gap_start:index]
+                segment = ranges[gap_start:i]
                 weights = segment ** 2
                 total_weight = float(np.sum(weights))
                 if total_weight > 0.0:
-                    indices = np.arange(gap_start, index)
+                    indices = np.arange(gap_start, i)
                     center = float(np.sum(indices * weights) / total_weight)
                 else:
-                    center = (gap_start + index - 1) / 2.0
+                    center = (gap_start + i - 1) / 2.0
+
                 gaps.append({
                     'start': gap_start,
-                    'end': index - 1,
+                    'end': i - 1,
                     'center': center,
                     'depth': float(np.max(segment)),
                 })
@@ -222,7 +215,7 @@ class ReactiveFollowGap(Node):
         if not gaps:
             return len(ranges) // 2
 
-        angular_resolution = max(abs(float(angle_increment)), 1.0e-9)
+        angular_resolution = max(abs(float(angle_increment)), 1e-9)
         minimum_gap_points = max(
             1, int(math.ceil(
                 self.minimum_gap_angle / angular_resolution)))
@@ -239,15 +232,11 @@ class ReactiveFollowGap(Node):
             gap for gap in navigable_gaps
             if gap['depth'] >= depth_threshold
         ]
-        if self.prefer_left_at_fork:
-            best_gap = max(
-                branch_candidates,
-                key=lambda gap: (gap['center'], gap['depth']))
-        else:
-            best_gap = max(
-                branch_candidates,
-                key=lambda gap: (gap['depth'], -abs(
-                    gap['center'] - 0.5 * len(ranges))))
+
+        # max() deliberately resolves similarly open branches toward the left.
+        best_gap = max(
+            branch_candidates,
+            key=lambda gap: (gap['center'], gap['depth']))
         return int(round(best_gap['center']))
 
 
@@ -291,7 +280,7 @@ class ReactiveFollowGap(Node):
         # self.get_logger().info(f"Angle is: {angle:.2f}") 
         # Adjust the speed
         
-        max_speed = self.max_speed
+        max_speed = 4.5   #was 4.5
         #if abs(angle)>0.78:
         #    set_speed = 0.9
             
@@ -317,28 +306,7 @@ class ReactiveFollowGap(Node):
 
         drive_msg.drive.steering_angle = angle
         self.last_steering_angle = angle
-        # A distance-based stopping envelope prevents requesting a speed from
-        # which the measured vehicle cannot stop before the forward obstacle.
-        braking_distance = max(
-            float(front_distance) - self.braking_stop_margin, 0.0)
-        braking_speed = math.sqrt(
-            2.0 * self.max_deceleration * braking_distance)
-        desired_speed = min(set_speed, max_speed, braking_speed)
-
-        # Model the measured braking capability in the command itself.  A
-        # sudden LiDAR change must not imply physically impossible instant
-        # deceleration in simulation or hide a collision that would occur on
-        # the real car.
-        now = time.monotonic()
-        if self.last_command_time is None:
-            set_speed = desired_speed
-        else:
-            dt = min(max(now - self.last_command_time, 0.0), 0.10)
-            minimum_reachable_speed = max(
-                self.last_commanded_speed - self.max_deceleration * dt, 0.0)
-            set_speed = max(desired_speed, minimum_reachable_speed)
-        self.last_command_time = now
-        self.last_commanded_speed = set_speed
+        # set_speed = min(set_speed, 0.5)
         drive_msg.drive.speed = set_speed  # Set your desired speed
         self.publisher.publish(drive_msg)
 

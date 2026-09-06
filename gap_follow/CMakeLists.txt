@@ -49,6 +49,19 @@ install(PROGRAMS
   DESTINATION lib/${PROJECT_NAME}
 )
 
+# Install launch files so they are discoverable with `ros2 launch`.
+install(DIRECTORY
+  launch
+  DESTINATION share/${PROJECT_NAME}
+)
+
+# Also provide the conventional ROS 2 executable name without a .py suffix.
+install(PROGRAMS
+  scripts/reactive_node.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME reactive_node
+)
+
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
