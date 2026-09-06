@@ -31,6 +31,25 @@ class ReactiveFollowGap(Node):
         self.disparity_thresh = 0.15
         self.last_steering_angle = 0.0
 
+        # When several branches have almost the same clearance, choose the
+        # left-most one.  A value of 0.9 means that a left gap must retain at
+        # least 90% of the clearance of the deepest gap before it is preferred.
+        self.declare_parameter('left_branch_depth_ratio', 0.90)
+        self.declare_parameter('minimum_gap_angle', 0.12)
+        self.left_branch_depth_ratio = float(self.get_parameter(
+            'left_branch_depth_ratio').value)
+        self.minimum_gap_angle = float(self.get_parameter(
+            'minimum_gap_angle').value)
+
+        if not 0.0 < self.left_branch_depth_ratio <= 1.0:
+            self.get_logger().warning(
+                'left_branch_depth_ratio must be in (0, 1]; using 0.90')
+            self.left_branch_depth_ratio = 0.90
+        if self.minimum_gap_angle < 0.0:
+            self.get_logger().warning(
+                'minimum_gap_angle must be non-negative; using 0.12 rad')
+            self.minimum_gap_angle = 0.12
+
         # Keep these defaults synchronized with f1tenth_stack/config/vesc.yaml.
         # servo = steering_gain * steering_angle + steering_offset
         self.declare_parameter('steering_angle_to_servo_gain', -1.2135)
@@ -158,58 +177,67 @@ class ReactiveFollowGap(Node):
         end_i = start_i + len(max_gap) - 1
         return start_i, end_i
 
-    def find_best_point(self, ranges):
-        best_gap_center = -1
-        max_depth = -1
-        current_depth = 0
-        start_index = -1
-        weighted_index_sum = 0  # For calculating the weighted center
+    def find_best_point(self, ranges, angle_increment):
+        """Choose the left-most gap whose depth is close to the best one.
 
-        max_distance = np.max(ranges)
-        max_index = np.argmax(ranges)
-        #self.get_logger().info(f"max_distance is: {max_distance}") 
-        #self.get_logger().info(f"max_index is: {max_index}") 
+        LaserScan indices increase from negative angles (right) to positive
+        angles (left), so a larger weighted-center index means a more leftward
+        path.  The depth threshold prevents the left preference from choosing
+        a substantially more obstructed route.
+        """
+        scan_start = 180
+        scan_end = len(ranges) - 180
+        gaps = []
+        gap_start = None
 
-        for i in range(180, len(ranges) - 180):
-            if ranges[i] > 0:  # Part of a gap
-                if start_index == -1:  # This is the start of a new gap
-                    start_index = i
-                current_depth += ranges[i]
-                weighted_index_sum += i * (ranges[i]**2)  # Weight index by square of range value
-            else:  # Not part of a gap or gap ended
-                if start_index != -1:  # End of a gap
-                    #gap_length = i - start_index
-                    #gap_depth = current_depth / gap_length  # Average depth of the gap
-                    gap_depth = max(ranges[start_index:i])
-                    if gap_depth > max_depth:
-                        max_depth = gap_depth
-                        # Calculate weighted center of the gap
-                        if current_depth != 0:  # Avoid division by zero
-                            total_weight = sum(ranges[start_index:i]**2)
-                            best_gap_center = weighted_index_sum // total_weight
-                        else:
-                            best_gap_center = (start_index + i - 1) // 2
-                    # Reset for the next potential gap
-                    start_index = -1
-                    current_depth = 0
-                    weighted_index_sum = 0
-        
-        # Check in case the last values in the array form the deepest gap
-        if start_index != -1:
-            #gap_length = len(ranges) - 180 - start_index
-            #gap_depth = current_depth / gap_length
-            gap_depth = max(ranges[start_index:len(ranges)-180])
-            if gap_depth > max_depth:
-                if current_depth != 0:
-                    total_weight = sum(ranges[start_index:len(ranges) - 180]**2)
-                    best_gap_center = weighted_index_sum // total_weight
+        for i in range(scan_start, scan_end + 1):
+            in_free_space = i < scan_end and ranges[i] > 0
+            if in_free_space and gap_start is None:
+                gap_start = i
+            elif not in_free_space and gap_start is not None:
+                segment = ranges[gap_start:i]
+                weights = segment ** 2
+                total_weight = float(np.sum(weights))
+                if total_weight > 0.0:
+                    indices = np.arange(gap_start, i)
+                    center = float(np.sum(indices * weights) / total_weight)
                 else:
-                    best_gap_center = (start_index + len(ranges) - 180 - 1) // 2
-        
-        #self.get_logger().info(f"best_gap_center is: {best_gap_center}") 
-        target_distance = ranges[int(best_gap_center)]
-        #self.get_logger().info(f"Furthest distance is: {target_distance:.3f}") 
-        return best_gap_center
+                    center = (gap_start + i - 1) / 2.0
+
+                gaps.append({
+                    'start': gap_start,
+                    'end': i - 1,
+                    'center': center,
+                    'depth': float(np.max(segment)),
+                })
+                gap_start = None
+
+        if not gaps:
+            return len(ranges) // 2
+
+        angular_resolution = max(abs(float(angle_increment)), 1e-9)
+        minimum_gap_points = max(
+            1, int(math.ceil(
+                self.minimum_gap_angle / angular_resolution)))
+        navigable_gaps = [
+            gap for gap in gaps
+            if gap['end'] - gap['start'] + 1 >= minimum_gap_points
+        ]
+        if not navigable_gaps:
+            navigable_gaps = gaps
+
+        deepest_gap = max(gap['depth'] for gap in navigable_gaps)
+        depth_threshold = deepest_gap * self.left_branch_depth_ratio
+        branch_candidates = [
+            gap for gap in navigable_gaps
+            if gap['depth'] >= depth_threshold
+        ]
+
+        # max() deliberately resolves similarly open branches toward the left.
+        best_gap = max(
+            branch_candidates,
+            key=lambda gap: (gap['center'], gap['depth']))
+        return int(round(best_gap['center']))
 
 
     def lidar_callback(self, data):
@@ -228,7 +256,7 @@ class ReactiveFollowGap(Node):
         # start_i, end_i = self.find_max_gap(proc_ranges)
 
         # Find the best point in the gap
-        best_index = self.find_best_point(proc_ranges)
+        best_index = self.find_best_point(proc_ranges, angle_increment)
         target_distance = ranges[int(best_index)]
 
         front_distance = proc_ranges[540]
@@ -252,7 +280,7 @@ class ReactiveFollowGap(Node):
         # self.get_logger().info(f"Angle is: {angle:.2f}") 
         # Adjust the speed
         
-        max_speed = 2.5   #was 4.5
+        max_speed = 4.5   #was 4.5
         #if abs(angle)>0.78:
         #    set_speed = 0.9
             
@@ -278,7 +306,7 @@ class ReactiveFollowGap(Node):
 
         drive_msg.drive.steering_angle = angle
         self.last_steering_angle = angle
-        set_speed = min(set_speed, 0.5)
+        # set_speed = min(set_speed, 0.5)
         drive_msg.drive.speed = set_speed  # Set your desired speed
         self.publisher.publish(drive_msg)
 

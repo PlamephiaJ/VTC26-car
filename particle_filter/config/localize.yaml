@@ -35,4 +35,4 @@ map_server:
   ros__parameters:
     # Absolute path to the map YAML; the referenced image may stay beside it.
     # A map name such as 'levine' still resolves to particle_filter/maps/levine.yaml.
-    map: '/home/jetsonblue/yuhao/vtc26_ws/map_process/map_202609032/20260903_134404/map_202609032_clean.yaml'
+    map: '/home/jetsonblue/yuhao/vtc26_ws/src/trajectory_planner/maps/real_0955/real_0955v2_clean.yaml'

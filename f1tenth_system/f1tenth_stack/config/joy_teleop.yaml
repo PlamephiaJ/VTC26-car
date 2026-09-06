@@ -30,7 +30,7 @@ joy_teleop:
       axis_mappings:
         drive-speed:
           axis: 1
-          scale: 0.75  # Change this for joystick linear speed.
+          scale: 1.0  # Change this for joystick linear speed.
           offset: 0.0
         drive-steering_angle:
           axis: 2
