@@ -17,7 +17,7 @@ def generate_launch_description():
             'prefer_left_at_fork', default_value='true',
             description='Prefer the left viable branch.'),
         DeclareLaunchArgument(
-            'left_branch_depth_ratio', default_value='0.90',
+            'left_branch_depth_ratio', default_value='0.65',
             description='Minimum left-gap depth relative to deepest gap.'),
         DeclareLaunchArgument(
             'minimum_gap_angle', default_value='0.12',
