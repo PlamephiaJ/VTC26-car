@@ -75,6 +75,7 @@ class ParticleFiler(Node):
         self.declare_parameter('rangelib_variant')
         self.declare_parameter('fine_timing')
         self.declare_parameter('viz')
+        self.declare_parameter('visualization_update_period', 0.2)
         self.declare_parameter('z_short')
         self.declare_parameter('z_max')
         self.declare_parameter('z_rand')
@@ -99,6 +100,10 @@ class ParticleFiler(Node):
         self.RANGELIB_VAR         = self.get_parameter('rangelib_variant').value
         self.SHOW_FINE_TIMING     = self.get_parameter('fine_timing').value
         self.DO_VIZ               = self.get_parameter('viz').value
+        self.VIZ_UPDATE_PERIOD    = self.get_parameter(
+            'visualization_update_period').value
+        if self.VIZ_UPDATE_PERIOD <= 0.0:
+            raise ValueError('visualization_update_period must be > 0')
 
         # sensor model constants
         self.Z_SHORT   = self.get_parameter('z_short').value
@@ -126,8 +131,12 @@ class ParticleFiler(Node):
         self.downsampled_angles = None
         self.range_method = None
         self.last_time = None
+        self.last_visualization_time = None
         self.last_stamp = None
         self.first_sensor_update = True
+        self.odom_to_base_matrix = None
+        self.odom_frame = None
+        self.base_frame = None
         self.state_lock = Lock()
 
         # cache this to avoid memory allocation in motion model
@@ -248,26 +257,17 @@ class ParticleFiler(Node):
             stamp = self.get_clock().now().to_msg()
 
         try:
-            odom_laser = self.tf_buffer.lookup_transform(
-                'odom', 'laser', Time.from_msg(stamp))
+            base_laser = self.tf_buffer.lookup_transform(
+                self.base_frame, 'laser', Time())
 
             map_laser_matrix = tf_transformations.concatenate_matrices(
                 tf_transformations.translation_matrix([pose[0], pose[1], 0.0]),
                 tf_transformations.quaternion_matrix(
                     tf_transformations.quaternion_from_euler(0.0, 0.0, pose[2])))
-            odom_laser_matrix = tf_transformations.concatenate_matrices(
-                tf_transformations.translation_matrix([
-                    odom_laser.transform.translation.x,
-                    odom_laser.transform.translation.y,
-                    odom_laser.transform.translation.z]),
-                tf_transformations.quaternion_matrix([
-                    odom_laser.transform.rotation.x,
-                    odom_laser.transform.rotation.y,
-                    odom_laser.transform.rotation.z,
-                    odom_laser.transform.rotation.w]))
-            map_odom_matrix = tf_transformations.concatenate_matrices(
+            map_odom_matrix = Utils.map_to_odom_matrix(
                 map_laser_matrix,
-                tf_transformations.inverse_matrix(odom_laser_matrix))
+                self.odom_to_base_matrix,
+                base_laser.transform)
 
             translation = tf_transformations.translation_from_matrix(map_odom_matrix)
             rotation = tf_transformations.quaternion_from_matrix(map_odom_matrix)
@@ -275,7 +275,7 @@ class ParticleFiler(Node):
             t = TransformStamped()
             t.header.stamp = stamp
             t.header.frame_id = 'map'
-            t.child_frame_id = 'odom'
+            t.child_frame_id = self.odom_frame
             t.transform.translation.x = translation[0]
             t.transform.translation.y = translation[1]
             t.transform.translation.z = translation[2]
@@ -288,7 +288,7 @@ class ParticleFiler(Node):
         except TransformException as ex:
             if not self.tf_lookup_warning_emitted:
                 self.get_logger().warning(
-                    'Cannot publish map -> odom: odom -> laser transform unavailable: '
+                    'Cannot publish map -> odom: base -> laser transform unavailable: '
                     + str(ex))
                 self.tf_lookup_warning_emitted = True
 
@@ -315,6 +315,12 @@ class ParticleFiler(Node):
         '''
         if not self.DO_VIZ:
             return
+
+        now = time.monotonic()
+        if (self.last_visualization_time is not None and
+                now - self.last_visualization_time < self.VIZ_UPDATE_PERIOD):
+            return
+        self.last_visualization_time = now
 
         if self.pose_pub.get_subscription_count() > 0 and isinstance(self.inferred_pose, np.ndarray):
             # Publish the inferred pose for visualization
@@ -357,12 +363,12 @@ class ParticleFiler(Node):
         ls = LaserScan()
         ls.header.stamp = self.last_stamp
         ls.header.frame_id = '/laser'
-        ls.angle_min = np.min(angles)
-        ls.angle_max = np.max(angles)
-        ls.angle_increment = np.abs(angles[0] - angles[1])
-        ls.range_min = 0
-        ls.range_max = np.max(ranges)
-        ls.ranges = ranges
+        ls.angle_min = float(np.min(angles))
+        ls.angle_max = float(np.max(angles))
+        ls.angle_increment = float(np.abs(angles[0] - angles[1]))
+        ls.range_min = 0.0
+        ls.range_max = float(np.max(ranges))
+        ls.ranges = np.asarray(ranges, dtype=float).tolist()
         self.pub_fake_scan.publish(ls)
 
     def lidarCB(self, msg):
@@ -395,6 +401,9 @@ class ParticleFiler(Node):
         orientation = Utils.quaternion_to_angle(msg.pose.pose.orientation)
         pose = np.array([position[0], position[1], orientation])
         self.current_speed = msg.twist.twist.linear.x
+        self.odom_to_base_matrix = Utils.pose_to_matrix(msg.pose.pose)
+        self.odom_frame = msg.header.frame_id.lstrip('/')
+        self.base_frame = msg.child_frame_id.lstrip('/')
 
         if isinstance(self.last_pose, np.ndarray):
             # changes in x,y,theta in local coordinate system of the car

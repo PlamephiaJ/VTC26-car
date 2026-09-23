@@ -144,6 +144,48 @@ def quaternion_to_angle(q):
     roll, pitch, yaw = tf_transformations.euler_from_quaternion((x, y, z, w))
     return yaw
 
+
+def pose_to_matrix(pose):
+    """Return the homogeneous transform represented by a ROS Pose."""
+    translation = tf_transformations.translation_matrix([
+        pose.position.x,
+        pose.position.y,
+        pose.position.z,
+    ])
+    rotation = tf_transformations.quaternion_matrix([
+        pose.orientation.x,
+        pose.orientation.y,
+        pose.orientation.z,
+        pose.orientation.w,
+    ])
+    return tf_transformations.concatenate_matrices(translation, rotation)
+
+
+def transform_to_matrix(transform):
+    """Return the homogeneous transform represented by a ROS Transform."""
+    translation = tf_transformations.translation_matrix([
+        transform.translation.x,
+        transform.translation.y,
+        transform.translation.z,
+    ])
+    rotation = tf_transformations.quaternion_matrix([
+        transform.rotation.x,
+        transform.rotation.y,
+        transform.rotation.z,
+        transform.rotation.w,
+    ])
+    return tf_transformations.concatenate_matrices(translation, rotation)
+
+
+def map_to_odom_matrix(
+        map_to_laser, odom_to_base, base_to_laser_transform):
+    """Compute map -> odom while preserving the localized laser pose."""
+    odom_to_laser = tf_transformations.concatenate_matrices(
+        odom_to_base, transform_to_matrix(base_to_laser_transform))
+    return tf_transformations.concatenate_matrices(
+        map_to_laser, tf_transformations.inverse_matrix(odom_to_laser))
+
+
 def rotation_matrix(theta):
     ''' Creates a rotation matrix for the given angle in radians '''
     c, s = np.cos(theta), np.sin(theta)

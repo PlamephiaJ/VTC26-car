@@ -12,6 +12,8 @@ particle_filter:
     # visualization
     viz: 1
     max_viz_particles: 60
+    # Publish pose/particles/fake scan to RViz at most at 5 Hz. MCL and TF are unchanged.
+    visualization_update_period: 0.2
     # ray marching method
     range_method: 'rmgpu'
     theta_discretization: 112
